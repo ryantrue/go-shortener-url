@@ -24,8 +24,16 @@ func ReceiveURL(m Model, w http.ResponseWriter, r *http.Request) {
 	m[short] = string(j)
 	fmt.Println("ReceiveUrl m =", m)
 
+	path, err := util.MakeURL(r.Host, short)
+	if err != nil {
+		fmt.Println("err: ", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(path))
 }
 
 func GetURL(m Model, w http.ResponseWriter, r *http.Request) {
