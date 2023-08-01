@@ -3,31 +3,40 @@ package config
 import (
 	"flag"
 	"fmt"
+	"os"
 	"regexp"
 )
 
-var FlagRunAddr string
-var FlagBaseAddr string
-
-//var FlagBasePort string
-
 var baseAddrRegexp = regexp.MustCompile("^:[0-9]{1,}$")
 
-func ParseFlags() {
+type Config struct {
+	FlagRunAddr  string
+	FlagBaseAddr string
+}
 
-	flag.StringVar(&FlagRunAddr, "a", ":8080", "address and port to run server")
-	//flag.StringVar(&FlagBasePort, "p", "8080", "port for urls")
-	flag.StringVar(&FlagBaseAddr, "b", "http://localhost:8080", "base address for urls")
+func ParseConfigAndFlags() Config {
+	var conf Config
+
+	flag.StringVar(&conf.FlagRunAddr, "a", ":8080", "address and port to run server")
+	flag.StringVar(&conf.FlagBaseAddr, "b", "http://localhost:8080", "base address for urls")
 
 	flag.Parse()
 
-	defaultHost := fmt.Sprintf("http://localhost:%s", FlagBaseAddr)
-
-	if baseAddrRegexp.MatchString(FlagBaseAddr) {
-		FlagBaseAddr = defaultHost
+	defaultHost := fmt.Sprintf("http://localhost:%s", conf.FlagBaseAddr)
+	if baseAddrRegexp.MatchString(conf.FlagBaseAddr) {
+		conf.FlagBaseAddr = defaultHost
 	}
 
-	fmt.Println("FlagRunAddr = ", FlagRunAddr)
-	fmt.Println("FlagBaseAddr = ", FlagBaseAddr)
-	//fmt.Println("FlagBasePort = ", FlagBasePort)
+	if val, ok := os.LookupEnv("BASE_URL"); ok {
+		conf.FlagBaseAddr = val
+	}
+
+	if val, ok := os.LookupEnv("SERVER_ADDRESS"); ok {
+		conf.FlagRunAddr = val
+	}
+
+	fmt.Println("FlagRunAddr = ", conf.FlagRunAddr)
+	fmt.Println("FlagBaseAddr = ", conf.FlagBaseAddr)
+
+	return conf
 }
