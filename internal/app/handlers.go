@@ -4,17 +4,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 
 	"github.com/RyanTrue/go-shortener-url/util"
 	"github.com/go-chi/chi"
 )
 
-var rID = regexp.MustCompile(`[a-zA-Z0-9]{7}`)
-
 type Model map[string]string
 
-func ReceiveURL(m Model, w http.ResponseWriter, r *http.Request) {
+func ReceiveURL(m Model, w http.ResponseWriter, r *http.Request, baseURL string) {
 	fmt.Println("ReceiveUrl")
 	// сократить ссылку
 	// записать в базу
@@ -23,8 +20,16 @@ func ReceiveURL(m Model, w http.ResponseWriter, r *http.Request) {
 
 	m[short] = string(j)
 	fmt.Println("ReceiveUrl m =", m)
+	fmt.Println("ReceiveUrl baseURL =", baseURL)
+	fmt.Println("r.Host =", r.Host)
 
-	path, err := util.MakeURL(r.Host, short)
+	if r.Host == "localhost" {
+		baseURL = fmt.Sprintf("http://localhost:%s", baseURL)
+	}
+
+	fmt.Println("ReceiveUrl baseURL =", baseURL)
+
+	path, err := util.MakeURL(baseURL, short)
 	if err != nil {
 		fmt.Println("err: ", err)
 		w.WriteHeader(http.StatusInternalServerError)

@@ -1,14 +1,20 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 
+	"github.com/RyanTrue/go-shortener-url/config"
 	internal "github.com/RyanTrue/go-shortener-url/internal/app"
 	"github.com/go-chi/chi"
 )
 
 func main() {
-	http.ListenAndServe(":8080", Run())
+	config.ParseFlags()
+
+	fmt.Println("Running server on", config.FlagRunAddr)
+
+	http.ListenAndServe(config.FlagRunAddr, Run())
 }
 
 func Run() chi.Router {
@@ -19,7 +25,7 @@ func Run() chi.Router {
 		internal.GetURL(m, rw, r)
 	})
 	r.Post("/", func(rw http.ResponseWriter, r *http.Request) {
-		internal.ReceiveURL(m, rw, r)
+		internal.ReceiveURL(m, rw, r, config.FlagBaseAddr)
 	})
 
 	return r
