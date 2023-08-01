@@ -5,9 +5,11 @@ import (
 
 	"github.com/RyanTrue/go-shortener-url/config"
 	internal "github.com/RyanTrue/go-shortener-url/internal/app"
+	"github.com/RyanTrue/go-shortener-url/internal/app/compress"
 	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
 	"github.com/RyanTrue/go-shortener-url/storage"
 	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
 	"go.uber.org/zap"
 )
 
@@ -40,6 +42,14 @@ func Run(conf config.Config) chi.Router {
 
 	r := chi.NewRouter()
 	r.Use(log.WithLogging)
+	r.Use(compress.UnpackData)
+
+	r.Use(middleware.Compress(5, "application/javascript",
+		"application/json",
+		"text/css",
+		"text/html",
+		"text/plain",
+		"text/xml"))
 
 	r.Get("/{id}", func(rw http.ResponseWriter, r *http.Request) {
 		internal.GetURL(storage, rw, r)
@@ -48,9 +58,12 @@ func Run(conf config.Config) chi.Router {
 		internal.ReceiveURL(storage, rw, r, conf.FlagBaseAddr)
 	})
 
-	r.Route("/api", func(r chi.Router) {
-		r.Post("/shorten", func(rw http.ResponseWriter, r *http.Request) {
-			internal.ReceiveURLAPI(storage, rw, r, conf.FlagBaseAddr)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AllowContentType("application/json"))
+		r.Route("/api", func(r chi.Router) {
+			r.Post("/shorten", func(rw http.ResponseWriter, r *http.Request) {
+				internal.ReceiveURLAPI(storage, rw, r, conf.FlagBaseAddr)
+			})
 		})
 	})
 
