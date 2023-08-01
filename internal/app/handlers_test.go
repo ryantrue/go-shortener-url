@@ -1,16 +1,49 @@
 package app
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/RyanTrue/go-shortener-url/util"
+	"github.com/go-chi/chi"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestGetUrl(t *testing.T) {
+func testRequest(t *testing.T, ts *httptest.Server, method,
+	path string, body io.Reader) *http.Response {
+	req, err := http.NewRequest(method, ts.URL+path, body)
+	require.NoError(t, err)
+
+	ts.Client()
+
+	ts.Client().CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	return resp
+}
+
+func runTestServer(m Model) chi.Router {
+	router := chi.NewRouter()
+	router.Get("/{id}", func(rw http.ResponseWriter, r *http.Request) {
+		GetURL(m, rw, r)
+	})
+	router.Post("/", func(rw http.ResponseWriter, r *http.Request) {
+		ReceiveURL(m, rw, r)
+	})
+
+	return router
+}
+
+func TestGetURL(t *testing.T) {
 	tests := []struct {
 		name       string
 		request    string
@@ -41,30 +74,20 @@ func TestGetUrl(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, test.request, nil)
+	for _, v := range tests {
+		ts := httptest.NewServer(runTestServer(v.model))
+		defer ts.Close()
 
-			w := httptest.NewRecorder()
+		resp := testRequest(t, ts, "GET", v.request, nil)
+		defer resp.Body.Close()
 
-			GetURL(test.model, w, request)
+		assert.Equal(t, v.statusCode, resp.StatusCode)
 
-			res := w.Result()
+		if v.statusCode != http.StatusNotFound {
+			s := strings.Replace(v.request, "/", "", -1)
 
-			assert.Equal(t, test.statusCode, res.StatusCode)
-
-			defer res.Body.Close()
-
-			s := strings.Replace(test.request, "/", "", -1)
-
-			// expectedURL, err := util.MakeURL(request.Host, s)
-			// require.NoError(t, err)
-
-			if test.statusCode != http.StatusNotFound {
-				assert.Equal(t, test.model[s], w.Header().Get("Location"))
-			}
-
-		})
+			assert.Equal(t, v.model[s], resp.Header.Get("Location"))
+		}
 	}
 }
 
@@ -81,7 +104,7 @@ func TestReceiveUrl(t *testing.T) {
 			request:    "/",
 			model:      Model{},
 			statusCode: http.StatusCreated,
-			body:       []byte("EwHXdJfB"),
+			body:       []byte("https://practicum.yandex.ru/"),
 		},
 		{
 			name:       "positive test #2",
@@ -99,23 +122,18 @@ func TestReceiveUrl(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			r := strings.NewReader(string(test.body))
-			request := httptest.NewRequest(http.MethodPost, "/", r)
+	for _, v := range tests {
+		// w := httptest.NewRecorder()
+		ts := httptest.NewServer(runTestServer(v.model))
+		defer ts.Close()
 
-			w := httptest.NewRecorder()
-			m := make(Model)
+		body := strings.NewReader(string(v.body))
+		resp := testRequest(t, ts, "POST", v.request, body)
+		defer resp.Body.Close()
 
-			ReceiveURL(m, w, request)
+		assert.Equal(t, v.statusCode, resp.StatusCode)
 
-			res := w.Result()
+		assert.Equal(t, v.model[util.Shorten(string(v.body))], string(v.body))
 
-			assert.Equal(t, test.statusCode, res.StatusCode)
-
-			defer res.Body.Close()
-
-			assert.Equal(t, m[util.Shorten(string(test.body))], string(test.body))
-		})
 	}
 }
