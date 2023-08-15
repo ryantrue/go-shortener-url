@@ -1,15 +1,15 @@
 package main
 
 import (
+	"github.com/RyanTrue/go-shortener-url/internal/app/compress"
+	"github.com/go-chi/chi/middleware"
 	"net/http"
 
 	"github.com/RyanTrue/go-shortener-url/config"
 	internal "github.com/RyanTrue/go-shortener-url/internal/app"
-	"github.com/RyanTrue/go-shortener-url/internal/app/compress"
 	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
 	"github.com/RyanTrue/go-shortener-url/storage"
 	"github.com/go-chi/chi"
-	"github.com/go-chi/chi/middleware"
 	"go.uber.org/zap"
 )
 
@@ -61,24 +61,24 @@ func Run(conf config.Config, store *storage.LinkStorage, db *storage.Database) c
 		"text/xml"))
 
 	r.Get("/{id}", func(rw http.ResponseWriter, r *http.Request) {
-		internal.GetURL(store, rw, r)
+		internal.GetURL(store, rw, r, conf, db)
 	})
 
 	r.Post("/", func(rw http.ResponseWriter, r *http.Request) {
-		internal.ReceiveURL(store, rw, r, conf.FlagBaseAddr, conf.FlagSaveToFile)
+		internal.ReceiveURL(store, rw, r, conf, db)
 	})
 
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AllowContentType("application/json"))
 		r.Route("/api", func(r chi.Router) {
 			r.Post("/shorten", func(rw http.ResponseWriter, r *http.Request) {
-				internal.ReceiveURLAPI(store, rw, r, conf.FlagBaseAddr, conf.FlagSaveToFile)
+				internal.ReceiveURLAPI(store, rw, r, conf, db)
 			})
 		})
 	})
 
 	r.Get("/ping", func(rw http.ResponseWriter, r *http.Request) {
-		internal.Ping(rw, r, db)
+		internal.Ping(rw, r, db, conf.FlagSaveToDB)
 	})
 
 	return r
