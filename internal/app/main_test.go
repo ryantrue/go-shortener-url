@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/RyanTrue/go-shortener-url/config"
-	store "github.com/RyanTrue/go-shortener-url/storage"
+	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
 	"github.com/go-chi/chi"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func testRequest(t *testing.T, ts *httptest.Server, method,
@@ -33,27 +33,51 @@ func testRequest(t *testing.T, ts *httptest.Server, method,
 	return resp
 }
 
-func runTestServer(storage *store.LinkStorage, conf config.Config, db *store.Database) chi.Router {
+func runTestServer(handler Handler) (chi.Router, error) {
 	router := chi.NewRouter()
 
+	logger, err := makeLogger()
+	if err != nil {
+		return nil, err
+	}
+
+	handler.Logger = logger
+
 	router.Get("/{id}", func(rw http.ResponseWriter, r *http.Request) {
-		GetURL(storage, rw, r, conf, db)
+		GetURL(handler, rw, r)
 	})
 	router.Post("/", func(rw http.ResponseWriter, r *http.Request) {
-		ReceiveURL(storage, rw, r, conf, db)
+		ReceiveURL(handler, rw, r)
 	})
 
 	router.Group(func(r chi.Router) {
 		r.Route("/api", func(r chi.Router) {
 			r.Post("/shorten", func(rw http.ResponseWriter, r *http.Request) {
-				ReceiveURLAPI(storage, rw, r, conf, db)
+				ReceiveURLAPI(handler, rw, r)
 			})
 
 			r.Post("/shorten/batch", func(rw http.ResponseWriter, r *http.Request) {
-				ReceiveManyURLAPI(storage, rw, r, conf, db)
+				ReceiveManyURLAPI(handler, rw, r)
 			})
 		})
 	})
 
-	return router
+	return router, nil
+}
+
+func makeLogger() (log.Logger, error) {
+	logger := log.Logger{}
+
+	zapLogger, err := zap.NewDevelopment()
+	if err != nil {
+		return logger, err
+	}
+
+	defer zapLogger.Sync()
+
+	sugar := *zapLogger.Sugar()
+
+	logger.Sugar = sugar
+
+	return logger, nil
 }

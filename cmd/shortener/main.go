@@ -7,7 +7,10 @@ import (
 	internal "github.com/RyanTrue/go-shortener-url/internal/app"
 	"github.com/RyanTrue/go-shortener-url/internal/app/compress"
 	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
-	"github.com/RyanTrue/go-shortener-url/storage"
+	"github.com/RyanTrue/go-shortener-url/internal/app/service"
+	storage "github.com/RyanTrue/go-shortener-url/storage/db"
+	file "github.com/RyanTrue/go-shortener-url/storage/file"
+	memory "github.com/RyanTrue/go-shortener-url/storage/memory"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"go.uber.org/zap"
@@ -16,41 +19,67 @@ import (
 func main() {
 	conf := config.ParseConfigAndFlags()
 
-	logger, err := zap.NewDevelopment()
+	logger := log.Logger{}
+
+	zapLogger, err := zap.NewDevelopment()
 	if err != nil {
-		log.Sugar.Fatal("error while creating sugar: ", zap.Error(err))
+		zapLogger.Fatal("error while creating sugar: ", zap.Error(err))
 	}
-	defer logger.Sync()
+	defer zapLogger.Sync()
 
-	log.Sugar = *logger.Sugar()
+	sugar := *zapLogger.Sugar()
 
-	log.Sugar.Infow(
+	logger.Sugar = sugar
+
+	logger.Sugar.Infow(
 		"Starting server",
 		"addr", conf.FlagRunAddr,
 	)
 
-	memory, err := storage.New(conf.FlagSaveToFile, conf.FlagPathToFile) // in-memory and file storage
-	if err != nil {
-		log.Sugar.Fatal("error while creating storage: ", zap.Error(err))
+	var srv *service.Service
+	var db *storage.URLStorage
+
+	if conf.FlagSaveToDB {
+		conn, err := storage.Connect(conf.FlagDatabaseAddress)
+		if err != nil {
+			logger.Sugar.Fatal("error while creating db connection: ", zap.Error(err))
+		}
+
+		db, err = storage.New(conn)
+		if err != nil {
+			logger.Sugar.Fatal("error while creating db: ", zap.Error(err))
+		}
+
+		srv = service.New(db)
+	} else if conf.FlagSaveToFile {
+		storage, err := file.New(conf.FlagPathToFile, logger)
+		if err != nil {
+			logger.Sugar.Fatal("error while creating file storage: ", zap.Error(err))
+		}
+
+		srv = service.New(storage)
+	} else {
+		storage, err := memory.New(logger)
+		if err != nil {
+			logger.Sugar.Fatal("error while creating memory storage: ", zap.Error(err))
+		}
+		srv = service.New(storage)
 	}
 
-	db, err := storage.NewStore(conf.FlagDatabaseAddress)
-	if err != nil {
-		log.Sugar.Fatal("error while connecting db: ", zap.Error(err))
+	handler := internal.Handler{
+		Service:      srv,
+		Logger:       logger,
+		FlagBaseAddr: conf.FlagBaseAddr,
 	}
 
-	if conf.FlagSaveToFile {
-		defer memory.FileStorage.Close()
-	}
-
-	if err := http.ListenAndServe(conf.FlagRunAddr, Run(conf, memory, db)); err != nil {
-		log.Sugar.Fatal("error while executing server: ", zap.Error(err))
+	if err := http.ListenAndServe(conf.FlagRunAddr, Run(handler, db)); err != nil {
+		logger.Sugar.Fatal("error while executing server: ", zap.Error(err))
 	}
 }
 
-func Run(conf config.Config, store *storage.LinkStorage, db *storage.Database) chi.Router {
+func Run(handler internal.Handler, db *storage.URLStorage) chi.Router {
 	r := chi.NewRouter()
-	r.Use(log.WithLogging)
+	r.Use(handler.Logger.WithLogging)
 	r.Use(compress.UnpackData)
 
 	r.Use(middleware.Compress(5, "application/javascript",
@@ -61,28 +90,28 @@ func Run(conf config.Config, store *storage.LinkStorage, db *storage.Database) c
 		"text/xml"))
 
 	r.Get("/{id}", func(rw http.ResponseWriter, r *http.Request) {
-		internal.GetURL(store, rw, r, conf, db)
+		internal.GetURL(handler, rw, r)
 	})
 
 	r.Post("/", func(rw http.ResponseWriter, r *http.Request) {
-		internal.ReceiveURL(store, rw, r, conf, db)
+		internal.ReceiveURL(handler, rw, r)
 	})
 
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AllowContentType("application/json"))
 		r.Route("/api", func(r chi.Router) {
 			r.Post("/shorten", func(rw http.ResponseWriter, r *http.Request) {
-				internal.ReceiveURLAPI(store, rw, r, conf, db)
+				internal.ReceiveURLAPI(handler, rw, r)
 			})
 
 			r.Post("/shorten/batch", func(rw http.ResponseWriter, r *http.Request) {
-				internal.ReceiveManyURLAPI(store, rw, r, conf, db)
+				internal.ReceiveManyURLAPI(handler, rw, r)
 			})
 		})
 	})
 
 	r.Get("/ping", func(rw http.ResponseWriter, r *http.Request) {
-		internal.Ping(rw, r, db, conf.FlagSaveToDB)
+		internal.Ping(rw, r, db)
 	})
 
 	return r

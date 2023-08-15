@@ -1,132 +1,155 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"time"
 
-	"github.com/RyanTrue/go-shortener-url/config"
+	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
 	"github.com/RyanTrue/go-shortener-url/internal/app/models"
-	"github.com/RyanTrue/go-shortener-url/storage"
+	"github.com/RyanTrue/go-shortener-url/storage/model"
 	"github.com/RyanTrue/go-shortener-url/util"
 	"go.uber.org/zap"
 )
 
-func ReceiveURLAPI(memory *storage.LinkStorage, w http.ResponseWriter, r *http.Request, conf config.Config, db *storage.Database) {
-	fmt.Println("ReceiveURLAPI")
+const uniqueViolation = `ERROR: duplicate key value violates unique constraint "urls_original_url_idx" (SQLSTATE 23505)`
+
+func ReceiveURLAPI(handler Handler, w http.ResponseWriter, r *http.Request) {
+	handler.Logger.Sugar.Debug("ReceiveURLAPI")
+
 	var req models.Request
 
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
-		fmt.Println("cannot decode request JSON body", zap.Error(err))
+		handler.Logger.Sugar.Debug("ReceiveURLAPI cannot decode request JSON body; err = ", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
+	ctx := r.Context()
 
-	short := util.Shorten(req.URL)
+	shortURL := util.Shorten(req.URL)
 
-	err := memory.SaveLink(ctx, "", short, req.URL, conf.FlagSaveToFile, conf.FlagSaveToDB, db)
+	md, err := model.MakeLinkModel("", shortURL, req.URL)
 	if err != nil {
+		handler.Logger.Sugar.Debug("ReceiveURLAPI MakeLinkModel err = ", err)
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+
+	err = handler.Service.Storage.Save(ctx, md, handler.Logger)
+	if err != nil {
+		if err.Error() == uniqueViolation {
+			sendJSONRespSingleURL(w, handler.FlagBaseAddr, shortURL, http.StatusConflict, handler.Logger)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	path, err := util.MakeURL(conf.FlagBaseAddr, short)
-	if err != nil {
-		fmt.Println("cannot make path", zap.Error(err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	sendJSONRespSingleURL(w, handler.FlagBaseAddr, shortURL, http.StatusCreated, handler.Logger)
+}
 
+func sendJSONRespSingleURL(w http.ResponseWriter, flagBaseAddr, short string, statusCode int, logger log.Logger) error {
 	resp := models.Response{
-		Result: path,
+		Result: "",
 	}
 
-	setHeader(w, "Content-Type", "application/json", http.StatusCreated)
+	path, err := util.MakeURL(flagBaseAddr, short)
+	if err != nil {
+		logger.Sugar.Debug("cannot make path", zap.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+
+	resp.Result = path
+
+	setHeader(w, "Content-Type", "application/json", statusCode)
 
 	respJSON, err := json.Marshal(resp)
 	if err != nil {
-		fmt.Println("Marshal err = ", err)
-		fmt.Println("cannot Marshal resp", zap.Error(err))
+		logger.Sugar.Debug("cannot Marshal resp: ", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
 
 	_, err = w.Write(respJSON)
 	if err != nil {
-		fmt.Println("Write err = ", err)
-		fmt.Println("cannot Write resp", zap.Error(err))
+		logger.Sugar.Debug("cannot Write resp: ", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
 
-	fmt.Println("respJSON = ", string(respJSON))
+	logger.Sugar.Debug("respJSON: ", string(respJSON))
 
+	return nil
 }
 
-func ReceiveManyURLAPI(memory *storage.LinkStorage, w http.ResponseWriter, r *http.Request, conf config.Config, db *storage.Database) {
-	fmt.Println("ReceiveManyURLAPI")
+func ReceiveManyURLAPI(handler Handler, w http.ResponseWriter, r *http.Request) {
+	handler.Logger.Sugar.Debug("ReceiveManyURLAPI")
 
 	var requestArr []models.RequestAPI
 	var responseArr []models.ResponseAPI
 
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&requestArr); err != nil {
-		fmt.Println("cannot decode request JSON body: ", zap.Error(err))
+		handler.Logger.Sugar.Debug("cannot decode request JSON body: ", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
+	ctx := r.Context()
+
+	statusCode := http.StatusCreated
+	var path string
 
 	for _, val := range requestArr {
-		short := util.Shorten(val.URL)
-		err := memory.SaveLink(ctx, val.ID, short, val.URL, conf.FlagSaveToFile, conf.FlagSaveToDB, db)
+		resp := models.ResponseAPI{ID: val.ID}
+		shortURL := util.Shorten(val.URL)
+
+		md, err := model.MakeLinkModel("", shortURL, val.URL)
 		if err != nil {
+			handler.Logger.Sugar.Debug("ReceiveURLAPI MakeLinkModel err = ", err)
 			w.WriteHeader(http.StatusInternalServerError)
-			return
 		}
 
-		path, err := util.MakeURL(conf.FlagBaseAddr, short)
+		err = handler.Service.Storage.Save(ctx, md, handler.Logger)
 		if err != nil {
-			fmt.Println("cannot make path", zap.Error(err))
+			if err.Error() == uniqueViolation {
+				statusCode = http.StatusConflict
+			} else { // if error is not unique violation
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+		}
+
+		path, err = util.MakeURL(handler.FlagBaseAddr, shortURL)
+		if err != nil {
+			handler.Logger.Sugar.Debug("cannot make path: ", zap.Error(err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		resp := models.ResponseAPI{
-			ID:       val.ID,
-			ShortURL: path,
-		}
+		resp.ShortURL = path
 
 		responseArr = append(responseArr, resp)
 
 	}
 
-	setHeader(w, "Content-Type", "application/json", http.StatusCreated)
+	setHeader(w, "Content-Type", "application/json", statusCode)
 
 	respJSON, err := json.Marshal(responseArr)
 	if err != nil {
-		fmt.Println("Marshal err = ", err)
-		fmt.Println("cannot Marshal resp", zap.Error(err))
+		handler.Logger.Sugar.Debug("cannot Marshal resp: ", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	_, err = w.Write(respJSON)
 	if err != nil {
-		fmt.Println("Write err = ", err)
-		fmt.Println("cannot Write resp", zap.Error(err))
+		handler.Logger.Sugar.Debug("cannot Write resp: ", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Println("respJSON = ", string(respJSON))
+	handler.Logger.Sugar.Debug("respJSON Many URL: ", string(respJSON))
 
 }

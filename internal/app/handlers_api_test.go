@@ -7,11 +7,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/RyanTrue/go-shortener-url/config"
+	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
 	"github.com/RyanTrue/go-shortener-url/internal/app/models"
-	store "github.com/RyanTrue/go-shortener-url/storage"
+	"github.com/RyanTrue/go-shortener-url/internal/app/service"
+	store "github.com/RyanTrue/go-shortener-url/storage/memory"
+	"github.com/RyanTrue/go-shortener-url/storage/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestReceiveURLAPI(t *testing.T) {
@@ -19,7 +22,7 @@ func TestReceiveURLAPI(t *testing.T) {
 		name         string
 		method       string
 		body         models.Request
-		store        store.LinkStorage
+		store        store.Memory
 		request      string
 		expectedCode int
 		expectedBody models.Response
@@ -28,8 +31,8 @@ func TestReceiveURLAPI(t *testing.T) {
 			name:   "positive test",
 			method: http.MethodPost,
 			body:   models.Request{URL: "https://practicum.yandex.ru"},
-			store: store.LinkStorage{
-				Store: []store.Link{},
+			store: store.Memory{
+				Store: []model.Link{},
 			},
 			request:      "/api/shorten",
 			expectedCode: http.StatusCreated,
@@ -39,14 +42,19 @@ func TestReceiveURLAPI(t *testing.T) {
 		},
 	}
 
-	conf := config.Config{
-		FlagSaveToFile: false,
-		FlagSaveToDB:   false,
-		FlagBaseAddr:   "http://localhost:8000/",
+	h := Handler{
+		FlagBaseAddr: "http://localhost:8000/",
 	}
 
 	for _, v := range testCases {
-		ts := httptest.NewServer(runTestServer(&v.store, conf, nil))
+		memory := &v.store
+		srv := service.New(memory)
+		h.Service = srv
+
+		r, err := runTestServer(h)
+		require.NoError(t, err)
+
+		ts := httptest.NewServer(r)
 		defer ts.Close()
 
 		bodyJSON, err := json.Marshal(v.body)
@@ -68,12 +76,9 @@ func TestReceiveURLAPI(t *testing.T) {
 
 func TestReceiveManyURLAPI(t *testing.T) {
 	type args struct {
-		memory       *store.LinkStorage
 		method       string
 		request      string
 		expectedCode int
-		conf         config.Config
-		db           *store.Database
 		body         []models.RequestAPI
 		expectedBody []models.ResponseAPI
 	}
@@ -84,12 +89,9 @@ func TestReceiveManyURLAPI(t *testing.T) {
 		{
 			name: "positive test without DB",
 			args: args{
-				memory:       &store.LinkStorage{},
 				method:       http.MethodPost,
 				request:      "/api/shorten/batch",
 				expectedCode: http.StatusCreated,
-				conf:         config.Config{FlagPathToFile: "tmp/short-url-db-test.json", FlagSaveToFile: true},
-				db:           &store.Database{},
 				body: []models.RequestAPI{
 					{
 						ID:  "e169d217-d3c8-493a-930f-7432368139c7",
@@ -107,25 +109,50 @@ func TestReceiveManyURLAPI(t *testing.T) {
 				expectedBody: []models.ResponseAPI{
 					{
 						ID:       "e169d217-d3c8-493a-930f-7432368139c7",
-						ShortURL: "NjYyNjB",
+						ShortURL: "http://localhost:8000/NjYyNjB",
 					},
 					{
 						ID:       "c82b937d-c303-40e1-a655-ab085002dfa0",
-						ShortURL: "NmJkYjV",
+						ShortURL: "http://localhost:8000/NmJkYjV",
 					},
 					{
 						ID:       "cd53c344-fb57-42cf-b576-823476f90918",
-						ShortURL: "ODczZGQ",
+						ShortURL: "http://localhost:8000/ODczZGQ",
 					}},
 			},
 		},
 	}
+
+	h := Handler{
+		FlagBaseAddr: "http://localhost:8000/",
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			memory, err := store.New(tt.args.conf.FlagSaveToFile, tt.args.conf.FlagPathToFile)
+			logger := log.Logger{}
+
+			zapLogger, err := zap.NewDevelopment()
 			require.NoError(t, err)
 
-			ts := httptest.NewServer(runTestServer(memory, tt.args.conf, tt.args.db))
+			defer zapLogger.Sync()
+
+			sugar := *zapLogger.Sugar()
+
+			logger.Sugar = sugar
+			h.Logger = logger
+
+			memory, err := store.New(h.Logger)
+			require.NoError(t, err)
+
+			srv := service.New(memory)
+			h.Service = srv
+
+			h.Service = srv
+
+			r, err := runTestServer(h)
+			require.NoError(t, err)
+
+			ts := httptest.NewServer(r)
 			defer ts.Close()
 
 			bodyJSON, err := json.Marshal(tt.args.body)
