@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -43,12 +44,19 @@ func (db *Database) createTableURLs() error {
 		original_url text NOT NULL
 	);`
 
-	_, err := db.Exec(ctx, q)
+	txOptions := pgx.TxOptions{
+		IsoLevel: pgx.ReadCommitted,
+	}
+
+	tx, err := db.BeginTx(ctx, txOptions)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	tx.Exec(ctx, q)
+	defer tx.Rollback(ctx)
+
+	return tx.Commit(ctx)
 }
 
 func (db *Database) Ping() error {
@@ -57,6 +65,8 @@ func (db *Database) Ping() error {
 
 func (db *Database) SaveLinkDB(ctx context.Context, link Link) error {
 	fmt.Println("SaveLinkDB")
+
+	fmt.Printf("INSERT INTO urls (id, short_url, original_url) VALUES(%s, %s, %s)\n", link.ID, link.ShortURL, link.OriginalURL)
 
 	q := `INSERT INTO urls (id, short_url, original_url) VALUES($1, $2, $3)`
 
@@ -78,6 +88,9 @@ func (db *Database) GetLinkByIDFromDB(ctx context.Context, short string) (string
 	err := row.Scan(&originalURL)
 	if err != nil {
 		fmt.Println("GetLinkByIDFromDB err = ", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return originalURL, ErrNotFound
+		}
 		return originalURL, err
 	}
 

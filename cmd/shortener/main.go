@@ -1,15 +1,15 @@
 package main
 
 import (
-	"github.com/RyanTrue/go-shortener-url/internal/app/compress"
-	"github.com/go-chi/chi/middleware"
 	"net/http"
 
 	"github.com/RyanTrue/go-shortener-url/config"
 	internal "github.com/RyanTrue/go-shortener-url/internal/app"
+	"github.com/RyanTrue/go-shortener-url/internal/app/compress"
 	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
 	"github.com/RyanTrue/go-shortener-url/storage"
 	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
 	"go.uber.org/zap"
 )
 
@@ -73,6 +73,10 @@ func Run(conf config.Config, store *storage.LinkStorage, db *storage.Database) c
 		r.Route("/api", func(r chi.Router) {
 			r.Post("/shorten", func(rw http.ResponseWriter, r *http.Request) {
 				internal.ReceiveURLAPI(store, rw, r, conf, db)
+			})
+
+			r.Post("/shorten/batch", func(rw http.ResponseWriter, r *http.Request) {
+				internal.ReceiveManyURLAPI(store, rw, r, conf, db)
 			})
 		})
 	})

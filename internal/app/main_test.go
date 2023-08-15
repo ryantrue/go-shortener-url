@@ -1,14 +1,15 @@
 package app
 
 import (
-	"github.com/RyanTrue/go-shortener-url/config"
-	store "github.com/RyanTrue/go-shortener-url/storage"
-	"github.com/go-chi/chi"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/RyanTrue/go-shortener-url/config"
+	store "github.com/RyanTrue/go-shortener-url/storage"
+	"github.com/go-chi/chi"
+	"github.com/stretchr/testify/require"
 )
 
 func testRequest(t *testing.T, ts *httptest.Server, method,
@@ -41,9 +42,16 @@ func runTestServer(storage *store.LinkStorage, conf config.Config, db *store.Dat
 	router.Post("/", func(rw http.ResponseWriter, r *http.Request) {
 		ReceiveURL(storage, rw, r, conf, db)
 	})
-	router.Route("/api", func(r chi.Router) {
-		r.Post("/shorten", func(rw http.ResponseWriter, r *http.Request) {
-			ReceiveURLAPI(storage, rw, r, conf, db)
+
+	router.Group(func(r chi.Router) {
+		r.Route("/api", func(r chi.Router) {
+			r.Post("/shorten", func(rw http.ResponseWriter, r *http.Request) {
+				ReceiveURLAPI(storage, rw, r, conf, db)
+			})
+
+			r.Post("/shorten/batch", func(rw http.ResponseWriter, r *http.Request) {
+				ReceiveManyURLAPI(storage, rw, r, conf, db)
+			})
 		})
 	})
 
