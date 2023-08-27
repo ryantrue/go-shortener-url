@@ -1,3 +1,3 @@
-module github.com/RyanTrue/go-shortener-url
+module github.com/andrewnikit
 
-go 1.21rc3
+go 1.20
