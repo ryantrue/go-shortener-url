@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
@@ -11,6 +12,7 @@ import (
 	"github.com/RyanTrue/go-shortener-url/storage/model"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Store interface {
@@ -18,14 +20,15 @@ type Store interface {
 	Ping() error
 	Save(ctx context.Context, link model.Link) error
 	Get(ctx context.Context, short string) (string, error)
+	DeleteURLS(ctx context.Context, link ...models.DeleteLink) error
 }
 
 type URLStorage struct {
-	*pgx.Conn
+	*pgxpool.Pool
 	Logger log.Logger
 }
 
-func New(conn *pgx.Conn, logger log.Logger) (*URLStorage, error) {
+func New(conn *pgxpool.Pool, logger log.Logger) (*URLStorage, error) {
 	db := &URLStorage{conn, logger}
 
 	return db, db.CreateTableURLs()
@@ -39,7 +42,8 @@ func (db *URLStorage) CreateTableURLs() error {
 	q := `CREATE TABLE IF NOT EXISTS urls(id uuid NOT NULL,
 		short_url text NOT NULL,
 		original_url text NOT NULL,
-		"user" uuid NOT NULL
+		"user" uuid NOT NULL,
+		is_deleted BOOLEAN NOT NULL DEFAULT FALSE
 	);
 	
 CREATE UNIQUE INDEX ON "urls" ("original_url");`
@@ -60,7 +64,7 @@ CREATE UNIQUE INDEX ON "urls" ("original_url");`
 }
 
 func (db *URLStorage) Ping(ctx context.Context) error {
-	return db.PgConn().Ping(ctx)
+	return db.Pool.Ping(ctx)
 }
 
 func (db *URLStorage) Save(ctx context.Context, link model.Link) error {
@@ -79,24 +83,25 @@ func (db *URLStorage) Save(ctx context.Context, link model.Link) error {
 	return nil
 }
 
-func (db *URLStorage) Get(ctx context.Context, short string) (string, error) {
+func (db *URLStorage) Get(ctx context.Context, short string) (string, bool, error) {
 	db.Logger.Sugar.Debug("GetLinkByIDFromDB")
 
 	var originalURL string
+	var deleted bool
 
 	db.Logger.Sugar.Debugf("SELECT original_url from urls where short_url = %s\n", short)
 
-	err := db.QueryRow(ctx, `SELECT original_url from urls where short_url = $1`, short).Scan(&originalURL)
+	err := db.QueryRow(ctx, `SELECT original_url, is_deleted from urls where short_url = $1`, short).Scan(&originalURL, &deleted)
 
 	if err != nil {
 		db.Logger.Sugar.Debug("GetLinkByIDFromDB err = ", err)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return originalURL, errs.ErrNotFound
+			return originalURL, false, errs.ErrNotFound
 		}
-		return originalURL, err
+		return originalURL, false, err
 	}
 
-	return originalURL, nil
+	return originalURL, deleted, nil
 }
 
 func (db *URLStorage) GetUserURLS(ctx context.Context, userID uuid.UUID) ([]models.UserLinks, error) {
@@ -134,4 +139,26 @@ func (db *URLStorage) GetUserURLS(ctx context.Context, userID uuid.UUID) ([]mode
 	}
 
 	return result, nil
+}
+
+func (db *URLStorage) DeleteURLS(ctx context.Context, link ...model.DeleteLink) error {
+	var q string
+
+	for _, link := range link {
+		q += fmt.Sprintf(`UPDATE "urls" SET "is_deleted" = true 
+  WHERE "user"='%s' AND "short_url" = '%s';`, link.UserID, link.ShortURL)
+	}
+
+	// reader := db.Pool().Exec(ctx, q)
+
+	// if err := reader.Close(); err != nil {
+	// 	return err
+	// }
+
+	_, err := db.Pool.Exec(ctx, q)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	log "github.com/RyanTrue/go-shortener-url/internal/app/logger"
@@ -266,4 +267,49 @@ func GetUserURLS(handler Handler, w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+}
+
+func DeleteURL(handler Handler, w http.ResponseWriter, r *http.Request) {
+	handler.Logger.Sugar.Debug("DeleteURL")
+
+	ctx := r.Context()
+
+	var userID uuid.UUID
+	cookie, err := r.Cookie("token")
+	if err != nil {
+		if errors.Is(err, http.ErrNoCookie) {
+			userID = ctx.Value(session.UserIDKey).(uuid.UUID)
+			handler.Logger.Sugar.Debug("DeleteURL userID = ", userID)
+		} else {
+			handler.Logger.Sugar.Debug("DeleteURL Cookie err = ", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	} else {
+		userID, _ = session.GetUserID(cookie.Value)
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		handler.Logger.Sugar.Debug("DeleteURL io.ReadAll err = ", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	handler.Logger.Sugar.Debug("DeleteURL body: ", string(body))
+	var reqArr []string
+
+	_ = json.Unmarshal(body, &reqArr)
+
+	handler.Logger.Sugar.Debug("DeleteURL res: ", reqArr)
+
+	for _, val := range reqArr {
+		req := model.DeleteLink{
+			UserID:   userID,
+			ShortURL: val,
+		}
+
+		handler.LinksChan <- req
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
