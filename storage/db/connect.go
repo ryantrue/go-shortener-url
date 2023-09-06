@@ -9,9 +9,8 @@ import (
 func Connect(databaseAddr string) (*pgxpool.Pool, error) {
 	conn, err := pgxpool.New(context.Background(), databaseAddr)
 	if err != nil {
-		return &pgxpool.Pool{}, err
+		return nil, err
 	}
 
 	return conn, nil
-
 }
