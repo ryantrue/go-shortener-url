@@ -239,18 +239,15 @@ func GetUserURLS(handler Handler, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := []models.UserLinks{}
-
-	for _, link := range links {
+	resp := make([]models.UserLinks, len(links))
+	for i, link := range links {
 		path, err := util.MakeURL(handler.FlagBaseAddr, link.ShortURL)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-
 		link.ShortURL = path
-
-		resp = append(resp, link)
+		resp[i] = link
 	}
 
 	respJSON, err := json.Marshal(resp)
