@@ -93,12 +93,12 @@ func main() {
 		go flushLinks(handler.LinksChan, db, handler.Logger)
 	}
 
-	if err := http.ListenAndServe(conf.FlagRunAddr, Run(handler, db)); err != nil {
+	if err := http.ListenAndServe(conf.FlagRunAddr, CreateAndConfigureRouter(handler, db)); err != nil {
 		logger.Sugar.Fatal("error while executing server: ", zap.Error(err))
 	}
 }
 
-func Run(handler internal.Handler, db *storage.URLStorage) chi.Router {
+func CreateAndConfigureRouter(handler internal.Handler, db *storage.URLStorage) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(session.CookieMiddleware)
