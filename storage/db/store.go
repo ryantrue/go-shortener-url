@@ -70,11 +70,9 @@ func (db *URLStorage) Ping(ctx context.Context) error {
 func (db *URLStorage) Save(ctx context.Context, link model.Link) error {
 	db.Logger.Sugar.Debug("SaveLinkDB")
 
-	db.Logger.Sugar.Debugf("INSERT INTO urls (id, short_url, original_url, user) VALUES(%s, %s, %s, %s)\n", link.ID, link.ShortURL, link.OriginalURL, link.UserID)
+	const query = `INSERT INTO urls (id, short_url, original_url, "user") VALUES ($1, $2, $3, $4);`
 
-	q := `INSERT INTO urls (id, short_url, original_url, "user") VALUES($1, $2, $3, $4)`
-
-	_, err := db.Exec(ctx, q, link.ID, link.ShortURL, link.OriginalURL, link.UserID)
+	_, err := db.Exec(ctx, query, link.ID, link.ShortURL, link.OriginalURL, link.UserID)
 	if err != nil {
 		db.Logger.Sugar.Debug("SaveLinkDB err = ", err)
 		return err
